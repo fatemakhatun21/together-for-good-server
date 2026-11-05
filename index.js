@@ -76,6 +76,11 @@ async function run() {
 
     const db = client.db("together_for_good_db");
     const eventsCollection = db.collection("events");
+    const joinedEventsCollection = db.collection("joinedEvents");
+    await joinedEventsCollection.createIndex(
+      { eventId: 1, userId: 1 },
+      { unique: true }
+    );
 
     app.post("/events", async (req, res) => {
       try {
@@ -255,7 +260,7 @@ async function run() {
         });
       }
     });
-    
+
     app.delete("/events/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
@@ -289,6 +294,89 @@ async function run() {
       }
     });
 
+    app.post("/join-events", verifyToken, async (req, res) => {
+      try {
+        const { eventId } = req.body;
+
+        if (!ObjectId.isValid(eventId)) {
+          return res.status(400).send({
+            message: "Invalid event ID",
+          });
+        }
+
+        const event = await eventsCollection.findOne({
+          _id: new ObjectId(eventId),
+        });
+
+        if (!event) {
+          return res.status(404).send({
+            message: "Event not found",
+          });
+        }
+
+        const today = new Date().toISOString().slice(0, 10);
+
+        if (event.eventDate <= today) {
+          return res.status(400).send({
+            message: "Cannot join a past event",
+          });
+        }
+
+        const existingJoin = await joinedEventsCollection.findOne({
+          eventId: eventId,
+          userId: req.user.id,
+        });
+
+        if (existingJoin) {
+          return res.status(409).send({
+            message: "You have already joined this event",
+          });
+        }
+
+        const result = await joinedEventsCollection.insertOne({
+          eventId,
+          userId: req.user.id,
+          userEmail: req.user.email,
+          joinedAt: new Date(),
+        });
+
+        res.status(201).send({
+          message: "Event joined successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("Join event error:", error);
+
+        res.status(500).send({
+          message: "Failed to join event",
+        });
+      }
+    });
+
+    app.get("/joined-events", verifyToken, async (req, res) => {
+      try {
+        const joins = await joinedEventsCollection
+          .find({ userId: req.user.id })
+          .toArray();
+
+        const eventIds = joins
+          .filter((join) => ObjectId.isValid(join.eventId))
+          .map((join) => new ObjectId(join.eventId));
+
+        const events = await eventsCollection
+          .find({ _id: { $in: eventIds } })
+          .sort({ eventDate: 1 })
+          .toArray();
+
+        res.send(events);
+      } catch (error) {
+        console.error("Get joined events error:", error);
+
+        res.status(500).send({
+          message: "Failed to fetch joined events",
+        });
+      }
+    });
     await db.command({ ping: 1 });
     console.log("MongoDB connected successfully!");
   } catch (error) {
