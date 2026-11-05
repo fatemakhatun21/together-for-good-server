@@ -237,6 +237,23 @@ async function run() {
       }
     });
 
+    app.get("/my-events", verifyToken, async (req, res) => {
+      try {
+        const events = await eventsCollection
+          .find({ creatorEmail: req.user.email })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(events);
+      } catch (error) {
+        console.error("Get my events error:", error);
+
+        res.status(500).send({
+          message: "Failed to fetch your events",
+        });
+      }
+    });
+    
     app.patch("/events/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
