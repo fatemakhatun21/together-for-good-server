@@ -377,6 +377,34 @@ async function run() {
         });
       }
     });
+
+    app.get("/join-events/:eventId/status", verifyToken, async (req, res) => {
+      try {
+        const { eventId } = req.params;
+
+        if (!ObjectId.isValid(eventId)) {
+          return res.status(400).send({
+            message: "Invalid event ID",
+          });
+        }
+
+        const existingJoin = await joinedEventsCollection.findOne({
+          eventId,
+          userId: req.user.id,
+        });
+
+        res.send({
+          joined: Boolean(existingJoin),
+        });
+      } catch (error) {
+        console.error("Join status error:", error);
+
+        res.status(500).send({
+          message: "Failed to check join status",
+        });
+      }
+    });
+
     await db.command({ ping: 1 });
     console.log("MongoDB connected successfully!");
   } catch (error) {
