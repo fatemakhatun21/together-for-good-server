@@ -5,12 +5,62 @@ import express from "express";
 import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+const authUrl = process.env.BETTER_AUTH_URL;
+
+if (!authUrl) {
+  throw new Error("BETTER_AUTH_URL is missing");
+}
+
+const JWKS = createRemoteJWKSet(
+  new URL("/api/auth/jwks", authUrl)
+);
+
+async function verifyToken(req, res, next) {
+  const authorization = req.headers.authorization || "";
+
+  if (!authorization.startsWith("Bearer ")) {
+    return res.status(401).send({
+      message: "Unauthorized: Token required",
+    });
+  }
+
+  const token = authorization.slice(7);
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: authUrl,
+      audience: authUrl,
+    });
+
+    if (
+      typeof payload.email !== "string" ||
+      !payload.sub
+    ) {
+      return res.status(401).send({
+        message: "Invalid user token",
+      });
+    }
+
+    req.user = {
+      id: payload.sub,
+      email: payload.email,
+    };
+
+    next();
+  } catch {
+    return res.status(401).send({
+      message: "Unauthorized: Invalid or expired token",
+    });
+  }
+}
 
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
@@ -34,7 +84,7 @@ async function run() {
         const result = await eventsCollection.insertOne(event);
 
         res.status(201).send(result);
-      } catch (error) {
+      } catch {
         res.status(500).send({
           message: "Failed to create event",
         });
@@ -46,7 +96,7 @@ async function run() {
         const events = await eventsCollection.find().toArray();
 
         res.send(events);
-      } catch (error) {
+      } catch {
         res.status(500).send({
           message: "Failed to fetch events",
         });
@@ -63,7 +113,7 @@ async function run() {
           .toArray();
 
         res.send(events);
-      } catch (error) {
+      } catch {
         res.status(500).send({
           message: "Failed to fetch upcoming events",
         });
@@ -81,7 +131,7 @@ async function run() {
           .toArray();
 
         res.send(events);
-      } catch (error) {
+      } catch {
         res.status(500).send({
           message: "Failed to fetch recent events",
         });
@@ -90,7 +140,7 @@ async function run() {
 
     app.get("/events/:id", async (req, res) => {
       try {
-        const id = req.params.id;
+        const { id } = req.params;
 
         if (!ObjectId.isValid(id)) {
           return res.status(400).send({
@@ -109,9 +159,99 @@ async function run() {
         }
 
         res.send(event);
-      } catch (error) {
+      } catch {
         res.status(500).send({
           message: "Failed to fetch event",
+        });
+      }
+    });
+
+    app.patch("/events/:id", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({
+            message: "Invalid event ID",
+          });
+        }
+
+        const {
+          title,
+          description,
+          eventType,
+          image,
+          location,
+          eventDate,
+        } = req.body;
+
+        const allowedTypes = [
+          "Plantation",
+          "Cleanup",
+          "Donation",
+          "Awareness",
+          "Other",
+        ];
+
+        if (
+          [title, description, image, location, eventDate].some(
+            (value) =>
+              typeof value !== "string" || !value.trim()
+          ) ||
+          !allowedTypes.includes(eventType) ||
+          !/^https?:\/\/\S+$/i.test(image) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)
+        ) {
+          return res.status(400).send({
+            message: "Invalid event information",
+          });
+        }
+
+        const today = new Date().toISOString().slice(0, 10);
+
+        if (
+          eventDate <= today ||
+          new Date(`${eventDate}T00:00:00Z`)
+            .toISOString()
+            .slice(0, 10) !== eventDate
+        ) {
+          return res.status(400).send({
+            message: "Select a valid future date",
+          });
+        }
+
+        const result = await eventsCollection.updateOne(
+          {
+            _id: new ObjectId(id),
+            creatorEmail: req.user.email,
+          },
+          {
+            $set: {
+              title: title.trim(),
+              description: description.trim(),
+              eventType,
+              image: image.trim(),
+              location: location.trim(),
+              eventDate,
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            message: "Event not found or access denied",
+          });
+        }
+
+        res.send({
+          message: "Event updated successfully",
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (error) {
+        console.error("Update event error:", error);
+
+        res.status(500).send({
+          message: "Failed to update event",
         });
       }
     });
