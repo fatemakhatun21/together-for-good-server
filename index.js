@@ -81,20 +81,86 @@ async function run() {
       { eventId: 1, userId: 1 },
       { unique: true }
     );
-
-    app.post("/events", async (req, res) => {
+    app.post("/events", verifyToken, async (req, res) => {
       try {
-        const event = req.body;
+        const {
+          title,
+          description,
+          eventType,
+          image,
+          location,
+          eventDate,
+        } = req.body;
+
+        const allowedTypes = [
+          "Plantation",
+          "Cleanup",
+          "Donation",
+          "Awareness",
+          "Other",
+        ];
+
+        const requiredFields = [
+          title,
+          description,
+          image,
+          location,
+          eventDate,
+        ];
+
+        if (
+          requiredFields.some(
+            (value) =>
+              typeof value !== "string" || !value.trim()
+          ) ||
+          !allowedTypes.includes(eventType) ||
+          !/^https?:\/\/\S+$/i.test(image) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)
+        ) {
+          return res.status(400).send({
+            message: "Invalid event information",
+          });
+        }
+
+        const today = new Date().toISOString().slice(0, 10);
+        const date = new Date(`${eventDate}T00:00:00Z`);
+
+        if (
+          Number.isNaN(date.getTime()) ||
+          date.toISOString().slice(0, 10) !== eventDate ||
+          eventDate <= today
+        ) {
+          return res.status(400).send({
+            message: "Please select a valid future date",
+          });
+        }
+
+        const event = {
+          title: title.trim(),
+          description: description.trim(),
+          eventType,
+          image: image.trim(),
+          location: location.trim(),
+          eventDate,
+          creatorEmail: req.user.email,
+          createdAt: new Date(),
+        };
 
         const result = await eventsCollection.insertOne(event);
 
-        res.status(201).send(result);
-      } catch {
+        res.status(201).send({
+          message: "Event created successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("Create event error:", error);
+
         res.status(500).send({
           message: "Failed to create event",
         });
       }
     });
+
 
     app.get("/events", async (req, res) => {
       try {
