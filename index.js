@@ -255,6 +255,39 @@ async function run() {
         });
       }
     });
+    
+    app.delete("/events/:id", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({
+            message: "Invalid event ID",
+          });
+        }
+
+        const result = await eventsCollection.deleteOne({
+          _id: new ObjectId(id),
+          creatorEmail: req.user.email,
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({
+            message: "Event not found or access denied",
+          });
+        }
+
+        res.send({
+          message: "Event deleted successfully",
+        });
+      } catch (error) {
+        console.error("Delete event error:", error);
+
+        res.status(500).send({
+          message: "Failed to delete event",
+        });
+      }
+    });
 
     await db.command({ ping: 1 });
     console.log("MongoDB connected successfully!");
